@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>3D 即時天氣地球示範</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background: #000;
+            color: #fff;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+                sans-serif;
+            overflow: hidden;
+            /* 避免出現捲軸，整個頁面當成一個全螢幕畫布 */
+        }
+
+        /*
+        重點修改：
+        1. 移除 640x640 / min() 限制，canvas 吃滿整個 viewport。
+        2. 標題與提示語改成 fixed 置頂 HUD，不再影響 canvas 位置、也不會被 canvas 遮住。
+      */
+        #hud {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            padding: 8px 12px;
+            text-align: center;
+            z-index: 10;
+            background: linear-gradient(to bottom, rgba(0, 0, 0, 0.7), transparent);
+            pointer-events: none;
+            /* 讓滑鼠事件可以直接穿透到 canvas（滾輪縮放不會被吃掉） */
+        }
+
+        #hud h1 {
+            margin-bottom: 4px;
+            font-size: 18px;
+        }
+
+        #hud p {
+            font-size: 13px;
+            opacity: 0.8;
+        }
+
+        #globe-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="hud">
+        <h1>3D 即時天氣地球（示範版）</h1>
+        <p>
+            滑鼠滾輪縮放，地球會自動旋轉。這裡使用靜態雲圖，你可以改成即時雲圖來源。
+        </p>
+    </div>
+
+    <!-- 這個容器會被 Three.js 塞入 WebGL Canvas（全螢幕大小） -->
+    <div id="globe-container"></div>
+
+    <!-- three.js 從 CDN 載入（你的指定版本） -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
+
+    <script>
+        // === 參數設定 ===
+        // 地球貼圖 & 雲圖（你現在用的那組 URL）
+        const EARTH_TEXTURE_URL =
+            "https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/planets/earth_atmos_2048.jpg";
+
+        const CLOUD_TEXTURE_URL =
+            "https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/planets/earth_clouds_1024.png";
+
+        const SPHERE_RADIUS = 2; // 要和 SphereGeometry 半徑一致
+        const CAMERA_FOV_DEG = 45;
+
+        // 自動旋轉速度（原本 1.2 -> 現在 0.6）
+        const AUTO_ROTATE_SPEED = 0.6;
+
+        const container = document.getElementById("globe-container");
+        if (!container) {
+            throw new Error("找不到 #globe-container");
+        }
+
+        // === 建立場景 ===
+        const scene = new THREE.Scene();
+
+        const camera = new THREE.PerspectiveCamera(
+            CAMERA_FOV_DEG,
+            container.clientWidth / container.clientHeight,
+            0.1,
+            1000
+        );
+        // 一開始在 z=8，看起來比較像「整顆地球」
+        camera.position.set(0, 0, 5.5);
+
+        const renderer = new THREE.WebGLRenderer({
+            antialias: true,
+            alpha: true,
+        });
+        renderer.setSize(container.clientWidth, container.clientHeight);
+        renderer.setPixelRatio(window.devicePixelRatio || 1);
+        container.innerHTML = "";
+        container.appendChild(renderer.domElement);
+
+        // === 燈光 ===
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+        scene.add(ambientLight);
+
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+        directionalLight.position.set(5, 3, 5);
+        scene.add(directionalLight);
+
+        // === 地球 + 雲層 ===
+        const earthGroup = new THREE.Group();
+        scene.add(earthGroup);
+
+        const earthGeometry = new THREE.SphereGeometry(SPHERE_RADIUS, 64, 64);
+        const textureLoader = new THREE.TextureLoader();
+
+        const earthMaterial = new THREE.MeshPhongMaterial({
+            map: textureLoader.load(EARTH_TEXTURE_URL),
+        });
+        const earthMesh = new THREE.Mesh(earthGeometry, earthMaterial);
+        earthGroup.add(earthMesh);
+
+        const cloudGeometry = new THREE.SphereGeometry(
+            SPHERE_RADIUS + 0.02,
+            64,
+            64
+        );
+        const cloudMaterial = new THREE.MeshLambertMaterial({
+            map: textureLoader.load(CLOUD_TEXTURE_URL),
+            transparent: true,
+            opacity: 0.8,
+        });
+        const cloudMesh = new THREE.Mesh(cloudGeometry, cloudMaterial);
+        earthGroup.add(cloudMesh);
+
+        // === 動畫（自動旋轉） ===
+        let animationFrameId;
+
+        function animate() {
+            earthGroup.rotation.y += AUTO_ROTATE_SPEED * 0.005;
+            cloudMesh.rotation.y += AUTO_ROTATE_SPEED * 0.006;
+
+            renderer.render(scene, camera);
+            animationFrameId = requestAnimationFrame(animate);
+        }
+
+        animate();
+
+        // === 視窗縮放處理：canvas 跟著 viewport 變大變小 ===
+        window.addEventListener("resize", onWindowResize);
+
+        function onWindowResize() {
+            const width = container.clientWidth;
+            const height = container.clientHeight;
+
+            camera.aspect = width / height;
+            camera.updateProjectionMatrix();
+
+            renderer.setSize(width, height);
+        }
+
+        // === 滑鼠滾輪縮放（改變相機 z，允許非常貼近） ===
+        renderer.domElement.addEventListener(
+            "wheel",
+            (event) => {
+                const zoomSpeed = 0.005; // 調整縮放手感
+
+                camera.position.z += event.deltaY * zoomSpeed;
+                console.log(`z:${camera.position.z}`)
+
+                // 避免相機穿過球心：
+                // - 如果 z 太小（甚至變負的），畫面會穿到球裡面去
+                // - 所以這裡只做一個非常小的下限，讓你可以幾乎貼在表面
+                const minZ = SPHERE_RADIUS + 0.1; // 差不多就像貼在球面上
+                if (camera.position.z < minZ) {
+                    camera.position.z = minZ;
+                }
+
+                // 上限放大一點，代表可以拉得很遠
+                const maxZ = 100;
+                if (camera.position.z > maxZ) {
+                    camera.position.z = maxZ;
+                }
+            },
+            { passive: true }
+        );
+    </script>
+</body>
+
+</html>
